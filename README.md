@@ -9,8 +9,7 @@ optical spectrometer console: averaging, smoothing, integration bands,
 zero/background subtraction, A/B reference comparison, wavelength markers,
 peak analysis and colorimetry.
 
-The UI is a flat GNOME-style dark theme with a matplotlib plot,
-matching the look of [Thermal-DMM-Viewer].
+The UI is a flat GNOME-style dark theme with a matplotlib plot.
 
 ![Main window](screenshots/main_window.png)
 
@@ -46,141 +45,78 @@ python3 -m venv .venv
 
 ## Instrument / workflow notes
 
-* Any instrument ArgyllCMS supports works (ColorMunki Photo/Design/Display,
-  i1 Pro family, colorimeters like Spyder5, …); with several connected, pick
-  one under **Instrument → Device…**. Reading modes auto-restrict to what
-  the hardware supports and the wording adapts (wheel-slot hints are
-  ColorMunki-only).
+* Works with any instrument ArgyllCMS supports (ColorMunki
+  Photo/Design/Display, i1 Pro family, colorimeters like Spyder5, …);
+  with several connected, pick one under **Instrument → Device…**.
+  Reading modes auto-restrict to what the hardware supports
+  (wheel-slot hints are ColorMunki-only; other instruments follow the
+  caption text).
 * **The annunciator lamps are the mode selector**: EMISSIVE,
-  REFLECTIVE and AMBIENT are clickable — the selected one carries a
-  blue border and lights amber only for itself while its wheel position
-  is unconfirmed; hovering highlights them like the buttons they are.
-  CALIBRATION stays a lamp too (green border while the calibration is
-  valid; click it to recalibrate every mode). Mode changes restart the
-  instrument session with one automatic re-calibration.
-* The ColorMunki wheel has three positions and an outer detent:
-  **1 = off, 2 = calibration, 3 = measuring** (front aperture: emissive and
-  reflective), **outer slot past OFF = ambient** (top diffuser). Calibration
-  is fully automatic — the app answers spotread's prompt itself; just turn
-  the wheel to 2 while the CALIBRATION lamp lights up, then to the slot for
-  your measurement. Calibration is **cached by ArgyllCMS on this computer**
-  (~/.cache/ArgyllCMS; dark calibration valid 1 h, reflective white
-  24 h): within those windows the app resumes measuring after a USB blip
-  or a mode switch with no calibration dance at all (spotread `-N`).
-  Instrument → **Force calibration** demands a fresh calibration at every
-  session start instead; spotread itself still asks for one whenever the
-  cache is genuinely stale. Argyll keeps a **separate calibration per
-  reading mode**, so whenever a calibration is due the app runs one short
-  session per mode automatically: keep the wheel at position 2 once and
-  emissive, ambient and reflective are all freshly calibrated — mode
-  switches then resume with no dance at all within the validity
-  windows. Other instruments: follow the caption text.
-* The ColorMunki's **physical button is a hardware trigger** fixed by
-  spotread: each press takes one reading. While the app is **stopped**,
-  late readings are dropped — the trace stays exactly as it was when
-  STOP was clicked; use ⏺ SINGLE instead for one deliberate
-  measurement while stopped. If the button is **held closed** —
-  pressed-and-held, resting against something, or defective —
-  spotread re-triggers a reading at every menu return; the app cannot
-  prevent those readings, but while stopped they are dropped, so the
-  trace never moves.
-* The CALIBRATION lamp carries a **green border while the instrument's
-  calibration is valid** — it turns green when spotread says
-  "Calibration complete" (or when a session starts straight on
-  Argyll's host cache), and fades when the instrument's own validity
-  window expires (dark cal 1 h, reflective white 24 h) or the moment a
-  new calibration demand appears. It never claims more than spotread
-  itself said. **Click the CALIBRATION lamp** to demand a fresh
-  calibration of every reading mode right now — normal Argyll cache
-  reuse resumes afterwards. Every calibration the driver demands (at
-  session start, before a reading, or after the lamp click) runs the
-  same all-modes pass: one wheel-at-2 effort leaves *all three* mode
-  calibrations fresh, so switching modes stays prompt-free for the
-  whole validity window. During the pass the lamp fills a quarter for
-  each completed mode (1/3 → 25 %, 2/3 → 50 %, 3/3 → 75 %); the all-green
-  border means 100 % ready.
-* **View → Curve style** switches the trace between straight segments
-  (default), overshoot-free monotone smoothing, and
-  sample-and-hold steps — presentation only, applied to the current
-  trace instantly, without needing a new measurement (the raw data is
-  unchanged either way).
-* **View → Units** picks the vertical-axis unit: raw counts,
-  V(λ)-weighted, photometric absolute, radiometric absolute or
-  reflectance %. The **V(λ)-weighted** view is a shape
-  view on the arbitrary scale (a.u.) — the eye's perceptual
-  weighting, no cd/m² claim. The **photometric absolute** view
-  follows the reading mode — luminance **cd/m²·nm⁻¹** (emissive),
-  illuminance **lx·nm⁻¹** (ambient, E = π·Y) — scaled so its integral
-  equals the instrument's own calibrated Y; in reflective mode it
-  falls back to the plain, unweighted reflectance factor, because a
-  reflectance is dimensionless and V(λ) weighting has no business
-  applying to a surface. The **radiometric absolute** view gives
-  the exact radiometric counterpart — radiance
-  **W/(sr·m²)·nm⁻¹** (emissive) or irradiance **W/m²·nm⁻¹** (ambient) —
-  undoing the V(λ) weighting so deep blue/red photons carry their real
-  energy (Xₑ = Y·∫S/(683·∫S·ȳ)); reflective likewise falls back to
-  plain reflectance. Both absolute views honestly show nothing when no
-  calibrated Y anchor exists.
-* **View → Axis: wavelength / frequency (THz) / energy (eV)** replots
-  the same data against f = c/λ or the photon energy E = hc/λ
-  (λ[nm] · E[eV] = 1239.84; ascending frequency/energy, red on the
-  left). Presentation only: markers, the band and every analysis stay
-  in nanometres; plot clicks convert back automatically.
-* The **saturation bar right of the plot** shows how close the busiest
-  sensor channel is to the end of its linear range — log scale, 0 at
-  the bottom, 100 % = the sensor's analog knee. Below the knee the
-  reading is linear; at or above it Argyll still accepts the reading
-  but the brightest channels are no longer quantitative, so the bar
-  goes steady red (flashing red well past the knee, or whenever
-  spotread itself reports "Sensor is saturated"). The scale is shared
-  between adaptive and fast mode (Argyll normalises each reading by
-  its integration time). The ceiling model is only claimed where it
-  can be substantiated — ColorMunki: the sensor's observed analog
-  knee (per Argyll's `munki_imp.c`); DTP20: the fixed 16-bit
-  full-scale conversion (`dtp20.c`); everything else, and all
-  reflective readings: n/a rather than a guess.
-* The left panel's **Chromaticity group** (below Band & markers) shows
-  the CIE chromaticity diagram in true colours with the sRGB, Adobe RGB,
-  Display P3 and Rec. 2020 gamut triangles, the D65/D50 white points
-  and the gray Planckian (black-body) line; a red dot
-  marks the current measurement, and **Open in a window** detaches a
-  resizable copy. **View → Chromaticity** switches the diagram between
-  CIE 1931 (x, y), CIE 1976 (u′, v′) and CIE 1960 (u, v) — the
-  measurement dot, gamuts, white points and the black-body line all
-  re-project. The sRGB triangle is always coloured with real sRGB
-  values at full strength (they are exact inside the gamut), while the
-  rest of the horseshoe stays muted.
-* Each new spectrum updates the plot as soon as it is complete (a few
-  seconds on the ColorMunki Photo). The plot range follows the
-  instrument's own spectral range and resolution.
-* The status bar carries a **centered calibration countdown**
-  (“CAL✓ 47 min left” — Argyll's own validity windows: dark cal 1 h
-  for emission modes, reflective white 24 h). It is honest about
-  cache reuse: a restart that skips the calibration dance does NOT
-  restart the window — the countdown is reconstructed from the
-  wall-clock stamp of the last real dance (persisted in the app
-  settings), so the minutes keep ticking down across app restarts.
-* If the USB device disappears (flaky mini-USB happens),
-  **“Device disconnected”** shows in the status bar and the app keeps
-  polling; when the device re-appears the session continues automatically
-  without losing settings — and a recalibration while stopped never
-  restarts measuring on its own, so your on-screen trace is preserved.
-* `spotread` must be in PATH (Fedora: `sudo dnf install argyllcms`). A different
-  ArgyllCMS build can be selected explicitly with **Instrument → ArgyllCMS
-  spotread path…** (persisted; the running session restarts on the new binary),
-  and **Instrument → Use default spotread (from PATH)** reverts to automatic
-  lookup.
-* **The ColorMunki's first spectral bins are clones, not data**: Argyll's
-  driver duplicates the 400 nm bin for everything below it (420 nm for
-  reflective readings — `munki_imp.c`, "Duplicate below this wl"). The
-  app shades that region **bordeaux** on the chart, and **Instrument →
-  Ignore unreliable band** removes it from the chart, every
-  measurement, the colour data and exports (XYZ is recomputed from
-  the trusted band). Other instruments show no highlight and the clip
-  is a no-op — the boundary is only claimed where it is known.
-* **High spectral resolution / fast readings** toggles take effect
-  immediately when a session is running (the instrument session
-  restarts with the new flag; Argyll's calibration cache keeps it quick).
+  REFLECTIVE and AMBIENT are clickable (selected = blue border);
+  CALIBRATION turns green while valid — click it to recalibrate every
+  mode. Mode changes restart the session with one automatic
+  re-calibration.
+* **ColorMunki wheel: 1 = off, 2 = calibration, 3 = measuring** (front
+  aperture: emissive and reflective); the **outer slot past OFF =
+  ambient** (top diffuser). Calibration is fully automatic: the app
+  answers spotread's prompts itself, and one wheel-at-2 pass calibrates
+  *all three* modes (Argyll keeps a separate calibration per mode; the
+  lamp fills a quarter per completed mode).
+* **Calibration is cached** by ArgyllCMS on this computer (dark cal
+  valid 1 h, reflective white 24 h): within those windows USB blips and
+  mode switches resume measuring with no calibration dance (spotread
+  `-N`). The status-bar countdown is rebuilt from the last real
+  calibration's timestamp, so it keeps ticking across app restarts.
+  **Instrument → Force calibration** demands a fresh calibration at
+  every session start instead — spotread itself still asks whenever
+  the cache is genuinely stale.
+* **Physical button**: fixed by spotread as a one-reading hardware
+  trigger. While the app is **stopped**, readings (late ones, or a
+  flood from a held or defective button) are dropped — the trace never
+  moves; use ⏺ SINGLE for one deliberate measurement.
+* `spotread` must be in PATH (Fedora: `sudo dnf install argyllcms`); a
+  different ArgyllCMS build can be selected with **Instrument →
+  ArgyllCMS spotread path…**, and **Use default spotread (from PATH)**
+  reverts.
+* **The ColorMunki's first spectral bins are clones, not data** (Argyll
+  duplicates the 400 nm bin for everything below it — `munki_imp.c`;
+  420 nm for reflective). The region is shaded bordeaux on the chart,
+  and **Instrument → Ignore unreliable band** removes it from every
+  measurement, the colour data and exports (XYZ is recomputed from the
+  trusted band). Other instruments: no highlight, clip is a no-op.
+* If the USB device disappears ("Device disconnected" in the status
+  bar), the app keeps polling and resumes automatically when it
+  re-appears; a recalibration while stopped never restarts measuring
+  on its own.
+
+## Views
+
+* **View → Units**: raw counts · V(λ)-weighted (a.u. shape view — the
+  eye's perceptual weighting, no cd/m² claim) · photometric absolute
+  (cd/m²·nm⁻¹ luminance / lx·nm⁻¹ illuminance = π·Y, scaled so the
+  integral equals the instrument's calibrated Y) · radiometric absolute
+  (the exact W/(sr·m²) / W/m² counterpart, V(λ) undone) · reflectance %.
+  A reflectance factor is dimensionless, so reflective mode falls back
+  to the plain reflectance curve for both absolute views; with no
+  calibrated Y anchor they honestly show nothing.
+* **View → Axis**: wavelength / frequency (THz) / photon energy (eV) —
+  presentation only; markers, the band and every analysis stay in
+  nanometres and plot clicks convert back automatically.
+* **View → Curve style**: straight segments (default), overshoot-free
+  monotone smoothing, or sample-and-hold steps — applied instantly, no
+  new measurement needed.
+* **View → Chromaticity**: CIE 1931 (x, y), 1976 (u′, v′) or 1960
+  (u, v) — the diagram shows true-colour sRGB inside the gamut
+  triangles (sRGB, Adobe RGB, Display P3, Rec. 2020), D65/D50, and the
+  gray Planckian line; **Open in a window** detaches a resizable copy.
+* **Saturation bar** (right of the plot): how close the busiest sensor
+  channel is to the end of its linear range — log scale, 100 % = the
+  sensor's analog knee. Steady red means the brightest channels are no
+  longer quantitative (flashing red well past the knee, or whenever
+  spotread reports "Sensor is saturated"). Claimed only where the
+  ceiling can be substantiated (ColorMunki: observed analog knee,
+  `munki_imp.c`; DTP20: fixed 16-bit full-scale, `dtp20.c`);
+  everything else — and all reflective readings — reads n/a.
 
 ### Platforms
 
@@ -230,7 +166,6 @@ raw frame → subtract zero (per frame) → average (rolling/cumulative)
                        └── stats: integral, peak/FWHM/centroid, xy/CCT
 ```
 
-[Thermal-DMM-Viewer]: https://github.com/serniko97/thermal-dmm-viewer
 
 ## Acknowledgements
 
