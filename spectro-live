@@ -1,0 +1,4 @@
+#!/bin/sh
+# spectro-live launcher: uses the project virtualenv
+cd "$(dirname "$0")"
+exec .venv/bin/python -m spectrov "$@"
