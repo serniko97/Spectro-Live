@@ -9,8 +9,6 @@ optical spectrometer console: averaging, smoothing, integration bands,
 zero/background subtraction, A/B reference comparison, wavelength markers,
 peak analysis and colorimetry.
 
-The UI is a flat GNOME-style dark theme with a matplotlib plot.
-
 ![Main window](screenshots/main_window.png)
 
 The chromaticity diagram can also be detached into its own resizable window,
