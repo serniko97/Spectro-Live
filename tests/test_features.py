@@ -68,7 +68,7 @@ def make_window(mode="Emissive"):
     os.makedirs("/tmp/opencode/hermetic-home", exist_ok=True)
     # hermetic settings persistence (View→curve style saves)
     Q.MainWindow._CFG_PATH = ("/tmp/opencode/hermetic-home/"
-                              ".config/spectrov/settings.json")
+                              ".config/spectro-live/settings.json")
     os.makedirs(os.path.dirname(Q.MainWindow._CFG_PATH), exist_ok=True)
     import contextlib
     with contextlib.suppress(OSError):

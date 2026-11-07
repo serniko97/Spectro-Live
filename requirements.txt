@@ -1,6 +1,8 @@
 numpy>=1.24
 matplotlib>=3.7
 PySide6
+colour-science>=0.4
+scipy>=1.10
 pywinpty; sys_platform == "win32"   # ConPTY: ArgyllCMS spotread on Windows
                                     # reads keypresses from the console,
                                     # never from the stdin pipe

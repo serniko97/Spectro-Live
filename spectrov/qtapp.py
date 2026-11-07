@@ -937,7 +937,7 @@ class MainWindow(QMainWindow):
                         "continuous readings begin automatically.")
 
     # ---- persistent settings ------------------------------------------
-    _CFG_PATH = os.path.expanduser("~/.config/spectrov/settings.json")
+    _CFG_PATH = os.path.expanduser("~/.config/spectro-live/settings.json")
 
     def _load_settings(self) -> dict:
         try:
@@ -3616,6 +3616,10 @@ class MainWindow(QMainWindow):
             return
         try:
             self.trace_a = sources.load_argyll(p)
+            # kept separately: _refresh() rebuilds trace A from
+            # _processed(), which falls back to this file when no
+            # frames are arriving (no device / stopped session)
+            self.loaded_a = self.trace_a
             self.frames.clear()
             self.status(f"Loaded {os.path.basename(p)} as trace A")
             self.last_raw = self.trace_a
@@ -3763,7 +3767,17 @@ class MainWindow(QMainWindow):
 
     def _processed(self) -> Spectrum | None:
         if not self.frames:
-            return None
+            # No live data flowing (device absent, or stopped before the
+            # first reading): an explicitly loaded file IS trace A. The
+            # status bar already promised "Loaded … as trace A" —
+            # without this fallback _refresh() would silently wipe it
+            # back to none on the very next pass.
+            s = getattr(self, "loaded_a", None)
+            if s is None:
+                return None
+            s = s.copy()
+            s = self._clip_unreliable(s)
+            return self._convert_units(s)
         if self.chk_avg is not None and self.chk_avg.isChecked():
             buf = self.frames[-self.spin_avg.value():] \
                 if self.rb_roll.isChecked() else self.frames
