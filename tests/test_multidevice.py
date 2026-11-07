@@ -716,6 +716,18 @@ def test_windows_port_paths():
           len(got) == 1 and "Keyboard" not in got[0][2], str(got))
     check("win scan: garbage -> empty list, no crash",
           sources._win_usb_parse("no json here") == [])
+    hid = ('[{"Name":"Some Widget","PNPDeviceID":"USB\\\\VID_1234&PID_5678\\\\C",'
+           '"PNPClass":"HIDClass"},'
+           '{"Name":"Other Widget","PNPDeviceID":"USB\\\\VID_2222&PID_3333\\\\D"}]')
+    got = sources._win_usb_parse(hid)
+    check("win scan: PNPClass HIDClass device is a candidate like the"
+          " Linux scan's bInterfaceClass 03",
+          len(got) == 1 and got[0][1] == "1234:5678", str(got))
+    hub = ('[{"Name":"Generic USB Hub",'
+           '"PNPDeviceID":"USB\\\\VID_05E3&PID_0610\\\\5&1"}]')
+    check("win scan: libusb-win32 era instruments live in Win32_PnPEntity,"
+          " not Win32_USBHub — parser keys on PNPDeviceID either way",
+          "ColorMunki" not in str(sources._win_usb_parse(hub)))
     with patch.dict("os.environ", {"APPDATA": "/tmp/opencode/appdata"}), \
             patch.object(sources.os, "name", "nt"):
         dirs = sources.munki_cache_dirs()

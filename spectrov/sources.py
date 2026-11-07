@@ -203,10 +203,14 @@ _WIN_SCAN_TTL = 15.0
 
 
 def _win_usb_parse(json_out: str) -> list[tuple[str, str, str]]:
-    """Parse `Get-CimInstance Win32_USBHub | ConvertTo-Json` output
+    """Parse `Get-CimInstance Win32_PnPEntity | ConvertTo-Json` output
     into the same (key, 'vid:pid', label) triples usb_devices() returns
     elsewhere. PNPDeviceID looks like 'USB\\VID_0971&PID_2007\\<serial>'.
-    Pure function (feed it the text) so it is testable anywhere."""
+    Win32_PnPEntity, NOT Win32_USBHub: besides hubs, USBHub only lists
+    stock-class devices — anything driven by a kernel driver (Argyll
+    installs its libusb-win32 one) is absent from it, so the instrument
+    itself would never show up. Pure function (feed it the text) so
+    it is testable anywhere."""
     import json
     try:
         data = json.loads(json_out)
@@ -227,10 +231,12 @@ def _win_usb_parse(json_out: str) -> list[tuple[str, str, str]]:
         name = str(it.get("Name") or "").strip()
         label = KNOWN_INSTRUMENTS.get((vid, pid),
                                       name or f"USB {vid}:{pid}")
-        # CIM gives no USB interface class: filter by known ids and
-        # name hints only — spotread remains the final arbiter once
+        # HIDClass devices are candidates like the Linux scan's
+        # bInterfaceClass == 03; everything else is filtered by known
+        # ids and name hints — spotread remains the final arbiter once
         # its session opens
-        if not is_candidate(vid, pid, label, hid=False):
+        hid = str(it.get("PNPClass") or "").strip().lower() == "hidclass"
+        if not is_candidate(vid, pid, label, hid):
             continue
         out.append((f"{vid}:{pid}", f"{vid}:{pid}", label))
     return out
@@ -245,8 +251,10 @@ def _win_usb_scan() -> list[tuple[str, str, str]]:
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             "Get-CimInstance Win32_USBHub | Select-Object Name,"
-             "PNPDeviceID | ConvertTo-Json -Compress"],
+             "Get-CimInstance Win32_PnPEntity |"
+             " Where-Object PNPDeviceID -like 'USB\\VID_*' |"
+             " Select-Object Name,PNPDeviceID,PNPClass |"
+             " ConvertTo-Json -Compress"],
             capture_output=True, text=True, timeout=30).stdout
         _WIN_SCAN = _win_usb_parse(out)
     except (OSError, subprocess.SubprocessError):
@@ -704,6 +712,44 @@ class _Pending:
                 or (self.xyz is not None and not self.vals))
 
 
+class _NtPtyProc:
+    """Popen stand-in for a ConPTY child (pywinpty gives isalive() and
+    an exit status, not a Popen). The session state machine, _kill()
+    and _lines() only ever use poll()/wait()/kill()/stdin — never the
+    Popen type — so this duck type keeps them all working unchanged."""
+    stdin = None      # no pipes under a ConPTY — respond() writes
+                      # through the winpty handle instead
+
+    def __init__(self, pty):
+        self._pty = pty
+
+    def poll(self):
+        return None if self._pty.isalive() else 0
+
+    def wait(self, timeout=None):
+        t0 = time.monotonic()
+        while self._pty.isalive():
+            if timeout is not None and time.monotonic() - t0 > timeout:
+                raise subprocess.TimeoutExpired("spotread (ConPTY)",
+                                                timeout)
+            time.sleep(0.1)
+        return self._pty.get_exitstatus()
+
+    def kill(self):
+        # pywinpty offers no kill of its own; the polite 'q\n' from
+        # _kill() normally ends the child first — this is the failsafe.
+        pid = getattr(self._pty, "pid", None)
+        if not pid:
+            return
+        import ctypes
+        PROCESS_TERMINATE = 0x0001
+        h = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE,
+                                               False, int(pid))
+        if h:
+            ctypes.windll.kernel32.TerminateProcess(h, 1)
+            ctypes.windll.kernel32.CloseHandle(h)
+
+
 class SpotreadWorker(SourceWorker):
     """Drives `spotread` in a persistent subprocess through a PTY.
 
@@ -743,12 +789,35 @@ class SpotreadWorker(SourceWorker):
         self._app_trig = False  # the CURRENT reading was requested by us
         self._master = None
         self._out_q = None     # Windows pipe transport (reader thread)
+        self._winpty = None    # Windows ConPTY transport (pywinpty);
+        #                       preferred — Argyll on Windows reads
+        #                       keypresses from the console, not pipes
         self._proc = None
         self.inst_type = ""     # set from spotread's "Instrument Type:"
 
     # -- worker API -----------------------------------------------------
+    def _winpty_write(self, text: str):
+        """Write into the ConPTY with LF mapped to CR: a real console
+        releases its line/input reads on the ENTER event (a bare LF
+        sits unread forever — Python children on line-mode console
+        stdin never see it, spotread's raw key read takes either).
+        Universal-newline readers translate CR back to '\n', so the
+        protocol strings keep their meaning for every child."""
+        w = getattr(self, "_winpty", None)
+        if w is None:
+            return
+        try:
+            w.write(text.replace("\n", "\r"))
+        except (OSError, ValueError):
+            pass
+
     def respond(self, text: str):
         if os.name == "nt":
+            if getattr(self, "_winpty", None) is not None:
+                # ConPTY: keys written into the pseudo-console are
+                # what spotread's console-side keyboard read consumes
+                self._winpty_write(text)
+                return
             p = self._proc
             if p is not None and p.stdin is not None:
                 try:
@@ -990,12 +1059,67 @@ class SpotreadWorker(SourceWorker):
         self._master, self._proc = mfd, p
 
     def _spawn_nt(self, mode: str | None, force: bool):
-        """Windows transport: there is no pty module, so spotread runs
-        on plain pipes. Windows pipes are synchronous and give partial
-        reads ONLY one byte at a time, and cannot be select()ed — so a
-        daemon reader thread drains stdout into a queue that _lines()
+        """Windows transport. There is no pty module — but ArgyllCMS on
+        Windows reads its keypresses from the CONSOLE, never from the
+        stdin pipe (verified empirically against spotread V3.5.0: the
+        'and then hit any key to continue' calibration prompt ignores
+        anything written into a plain pipe and the session hangs at the
+        very first prompt). So when pywinpty is importable the session
+        gets a REAL Windows pseudo-console (ConPTY) — the same design
+        as the POSIX pty path, and respond()'s keys actually arrive.
+        Plain pipes remain the fallback without pywinpty (sessions then
+        sit unread at the first key prompt — honest, not pretend).
+        Windows pipes are synchronous and give partial reads ONLY one
+        byte at a time, and cannot be select()ed — so a daemon reader
+        thread drains the pty or pipes into a queue that _lines()
         polls with a timeout (the same 'yield None every 0.2 s when
         idle' contract the PTY loop gives the session state machine)."""
+        try:
+            from winpty import PTY
+        except ImportError:
+            PTY = None                  # no ConPTY: plain-pipe session
+        self._winpty = None
+        out_q: queue.Queue = queue.Queue()
+        if PTY is not None:
+            w = PTY(80, 40)
+            cmd = self._command(mode, force)
+            # spawn() takes the program as its FIRST argument and glues
+            # it in front of cmdline itself — a cmdline that duplicates
+            # the program makes spotread parse its own path as the
+            # [logfile] argument ("Error - Unable to open logfile
+            # '<spotread.exe>' for writing", V3.5.0)
+            w.spawn(cmd[0], cmdline=" ".join(cmd[1:]),
+                    cwd=os.getcwd())
+            self._winpty = w
+
+            def _read_pty(p, q):
+                try:
+                    while True:
+                        d = p.read(blocking=False)
+                        if d:
+                            # ConPTY prefixes real output with
+                            # terminal housekeeping sequences — strip
+                            # every ESC-initiated one before the
+                            # session's regexes see the line
+                            q.put(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]"
+                                         r"|\x1b.", "", d)
+                                  .encode("utf-8", "replace"))
+                            continue
+                        if not p.isalive():
+                            break
+                        time.sleep(0.05)
+                except (OSError, ValueError):
+                    pass
+                finally:
+                    q.put(None)         # EOF sentinel
+
+            threading.Thread(target=_read_pty, args=(w, out_q),
+                             daemon=True).start()
+            if not force:
+                self._skip_cache_once = False
+            self._out_q = out_q
+            self._proc = _NtPtyProc(w)
+            return
         p = subprocess.Popen(
             self._command(mode, force),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -1025,17 +1149,20 @@ class SpotreadWorker(SourceWorker):
     def _kill(self):
         p, m = self._proc, self._master
         if os.name == "nt" and p is not None:
-            try:
-                if p.stdin is not None:
+            if getattr(self, "_winpty", None) is not None:
+                self._winpty_write("q\n")   # menu farewell into the ConPTY
+            elif p.stdin is not None:
+                try:
                     p.stdin.write(b"q\n")
                     p.stdin.flush()
-            except (OSError, ValueError):
-                pass
+                except (OSError, ValueError):
+                    pass
             try:
                 p.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 p.kill()
             self._proc = None
+            self._winpty = None
             return
         if p is not None and p.poll() is None:
             try:

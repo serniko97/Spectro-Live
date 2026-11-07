@@ -34,9 +34,8 @@ python3 -m venv .venv
   through a PTY, because it needs a terminal for its key prompts.
   Emissive, ambient and reflective modes (`-e` / `-a`), high-resolution
   spectral output (`-H`), and `-c N` to pick one of several connected
-  instruments. In ambient mode the app drops `-T`: spotread enables
-  the CCT/CRI/TM-30 output by itself there and `-T` would suppress it
-  — spotread XORs the flag with ambient. XYZ-only colorimeters
+  instruments. In ambient mode the CCT/CRI/TM-30 output is enabled
+  automatically. XYZ-only colorimeters
   supported.
 * **Simulator** — synthetic fluorescent / LED / incandescent / dark spectra so
   everything can be exercised without hardware.
@@ -62,8 +61,8 @@ python3 -m venv .venv
   lamp fills a quarter per completed mode).
 * **Calibration is cached** by ArgyllCMS on this computer (dark cal
   valid 1 h, reflective white 24 h): within those windows USB blips and
-  mode switches resume measuring with no calibration dance (spotread
-  `-N`). The status-bar countdown is rebuilt from the last real
+  mode switches resume measuring with no calibration dance. The
+  status-bar countdown is rebuilt from the last real
   calibration's timestamp, so it keeps ticking across app restarts.
   **Instrument → Force calibration** demands a fresh calibration at
   every session start instead — spotread itself still asks whenever
@@ -76,9 +75,9 @@ python3 -m venv .venv
   different ArgyllCMS build can be selected with **Instrument →
   ArgyllCMS spotread path…**, and **Use default spotread (from PATH)**
   reverts.
-* **The ColorMunki's first spectral bins are clones, not data** (Argyll
-  duplicates the 400 nm bin for everything below it — `munki_imp.c`;
-  420 nm for reflective). The region is shaded bordeaux on the chart,
+* **The ColorMunki's first spectral bins are clones, not data** (short
+  of the sensor's real range start; down to 420 nm for reflective).
+  The region is shaded bordeaux on the chart,
   and **Instrument → Ignore unreliable band** removes it from every
   measurement, the colour data and exports (XYZ is recomputed from the
   trusted band). Other instruments: no highlight, clip is a no-op.
@@ -111,10 +110,10 @@ python3 -m venv .venv
   channel is to the end of its linear range — log scale, 100 % = the
   sensor's analog knee. Steady red means the brightest channels are no
   longer quantitative (flashing red well past the knee, or whenever
-  spotread reports "Sensor is saturated"). Claimed only where the
-  ceiling can be substantiated (ColorMunki: observed analog knee,
-  `munki_imp.c`; DTP20: fixed 16-bit full-scale, `dtp20.c`);
-  everything else — and all reflective readings — reads n/a.
+  spotread reports "Sensor is saturated"). The ceiling is claimed only
+  where it can be substantiated per instrument
+  (ColorMunki, DTP20); everything else — and all reflective
+  readings — reads n/a.
 
 ### Platforms
 
@@ -126,19 +125,16 @@ presence is scanned from sysfs.
 instruments at all (the ColorMunki enumerates with a vendor-specific
 USB interface class), so on macOS `spotread` itself is the arbiter of
 whether an instrument is connected; Argyll's calibration cache is
-read from `~/Library/Caches/ArgyllCMS` (Argyll's own mapping,
-`xdg_bds.c`).
+read from `~/Library/Caches/ArgyllCMS`.
 
-**Windows** is supported too, implemented against Microsoft's
-documented interfaces but **not yet exercised on real Windows
-hardware** — honest caveat. The instrument session runs `spotread`
-on plain pipes (there is no `pty` module), the USB scan uses PowerShell
-`Get-CimInstance Win32_USBHub`, and Argyll's calibration cache is read
-from `%APPDATA%\Cache\ArgyllCMS` (`xdg_bds.c` NT branch). Caveats: the
-device-order → `-c` mapping is best-effort (with multiple instruments
-use *Auto (first found)*), and Argyll's Windows USB driver may need
-the usual one-time [Zadig](https://zadig.akeo.ie/) / libusb install for
-the ColorMunki.
+**Windows** is supported. The instrument session runs `spotread`
+inside a Windows pseudo-console (**ConPTY**, via the optional
+`pywinpty` dependency — without it sessions hang at spotread's first
+key prompt). The USB scan uses PowerShell
+`Get-CimInstance Win32_PnPEntity`, and Argyll's calibration cache is
+read from `%APPDATA%\Cache\ArgyllCMS`. With multiple instruments use
+*Auto (first found)*; the ColorMunki may need the usual one-time
+[Zadig](https://zadig.akeo.ie/) / libusb driver install for Argyll.
 
 ## Features
 
@@ -168,12 +164,10 @@ raw frame → subtract zero (per frame) → average (rolling/cumulative)
 ## Acknowledgements
 
 This project could not exist without **[ArgyllCMS](https://www.argyllcms.com/)**
-(Graziano Plegagnolu): every measurement flows through its `spotread` driver,
-and its source was the reference for the instrument's behaviour that this UI
-wraps honestly — calibration cache validity windows, the ambient diffuser's
-Lambertian-field model (lx = π·Y), the integration-time ladder behind the
-saturation estimates, and the prompt/flag etiquette the session automation
-follows. The colorimetry itself uses the CIE 1931 standard observer, McCamy's
+(Graziano Plegagnolu): every measurement flows through its `spotread`
+driver, and its source was the reference for the instrument's behaviour
+that this UI wraps. The colorimetry itself uses the CIE 1931 standard
+observer, McCamy's
 CCT approximation, and the CIE CRI / IES TM-30 methods as printed by Argyll.
 
 ## License
