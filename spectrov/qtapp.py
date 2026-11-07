@@ -3344,16 +3344,9 @@ class MainWindow(QMainWindow):
     # ===================================================================
     # start / pause / single
     # ===================================================================
-    def _adapt_plot_range(self, spec: Spectrum):
-        """Adopt the instrument's own spectral range — different
-        spectrometers report wider/narrower ranges and resolutions, and
-        the axis, band spins and rainbow must follow, not assume
-        380–730. Called on every frame; no-op when unchanged."""
-        if len(spec.wavelengths) == 0:
-            return                      # XYZ-only colorimeter frame
-        lo, hi = float(spec.wavelengths[0]), float(spec.wavelengths[-1])
-        if abs(lo - self.x_lo) < 1e-6 and abs(hi - self.x_hi) < 1e-6:
-            return
+    def _set_plot_range(self, lo, hi, note=""):
+        """One place for every plot-range change: axis, band spins,
+        band pins and the rainbow backdrop all move together."""
         was_full = self.band_lo <= self.x_lo + 1e-6 \
             and self.band_hi >= self.x_hi - 1e-6
         self.x_lo, self.x_hi = lo, hi
@@ -3372,8 +3365,41 @@ class MainWindow(QMainWindow):
         self.rainbow.set_extent((lo, hi, 0.0, 1.0))
         self.rainbow_clip.get_path().vertices = [
             (lo, 0.0), (lo, 0.0), (hi, 0.0), (hi, 0.0), (lo, 0.0)]
-        self._diag_write(f"GUI: plot range adapted to instrument: "
-                         f"{lo:.1f}–{hi:.1f} nm ({len(spec.wavelengths)} pts)\n")
+        if note:
+            self._diag_write(note)
+
+    def _widen_view_to_file(self, s: Spectrum, name: str):
+        """A loaded FILE (trace A or reference B) can be wider than the
+        instrument's own window — a CIE reference runs to 780 nm, the
+        ColorMunki stops at 730. Show everything the file contains.
+        Only ever WIDENS: a narrower file leaves the instrument window
+        untouched, and the first live frame snaps the view back via
+        _adapt_plot_range()."""
+        if s is None or len(s.wavelengths) == 0:
+            return
+        lo = min(self.x_lo, float(s.wavelengths[0]))
+        hi = max(self.x_hi, float(s.wavelengths[-1]))
+        if abs(lo - self.x_lo) < 1e-6 and abs(hi - self.x_hi) < 1e-6:
+            return
+        self._set_plot_range(
+            lo, hi,
+            f"GUI: plot range widened for loaded file '{name}': "
+            f"{lo:.1f}–{hi:.1f} nm\n")
+
+    def _adapt_plot_range(self, spec: Spectrum):
+        """Adopt the instrument's own spectral range — different
+        spectrometers report wider/narrower ranges and resolutions, and
+        the axis, band spins and rainbow must follow, not assume
+        380–730. Called on every frame; no-op when unchanged."""
+        if len(spec.wavelengths) == 0:
+            return                      # XYZ-only colorimeter frame
+        lo, hi = float(spec.wavelengths[0]), float(spec.wavelengths[-1])
+        if abs(lo - self.x_lo) < 1e-6 and abs(hi - self.x_hi) < 1e-6:
+            return
+        self._set_plot_range(
+            lo, hi,
+            f"GUI: plot range adapted to instrument: "
+            f"{lo:.1f}–{hi:.1f} nm ({len(spec.wavelengths)} pts)\n")
 
     def _make_worker(self):
         if self.source_name == "Simulator":
@@ -3603,6 +3629,8 @@ class MainWindow(QMainWindow):
             return
         try:
             self.reference = sources.load_argyll(p)
+            # reference B may also be wider than the instrument window
+            self._widen_view_to_file(self.reference, os.path.basename(p))
             self.status(f"Reference loaded: {os.path.basename(p)}")
             self._refresh()
         except Exception as e:
@@ -3620,6 +3648,9 @@ class MainWindow(QMainWindow):
             # _processed(), which falls back to this file when no
             # frames are arriving (no device / stopped session)
             self.loaded_a = self.trace_a
+            # a file can be WIDER than the instrument window (e.g. a
+            # CIE reference to 780 nm) — show all of it
+            self._widen_view_to_file(self.trace_a, os.path.basename(p))
             self.frames.clear()
             self.status(f"Loaded {os.path.basename(p)} as trace A")
             self.last_raw = self.trace_a
